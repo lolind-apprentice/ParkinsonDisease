@@ -1,0 +1,29 @@
+# === Python Virtual Environments ===
+venv/
+.venv/
+env/
+ENV/
+pyvenv.cfg
+.Python
+include/
+bin/
+lib/
+share/
+pip-selfcheck.json
+
+# === Python Cache & Compiled Files ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# === Streamlit Specifics ===
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# === Operating System Files ===
+.DS_Store
+Thumbs.db
+ehthumbs.db
