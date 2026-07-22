@@ -73,7 +73,7 @@ if app_mode == "About the App":
     st.header("Overview")
     st.markdown("""
     This interactive dashboard analyzes vocal measurement datasets to:
-    1. **Detect Parkinson's Disease (PD)** using voice recording classifications (Random Forest & Logistic Regression).
+    1. **Detect Parkinson's Disease (PD)** using voice recording classifications & regression.
     2. **Track Symptom Severity** by predicting Unified Parkinson's Disease Rating Scale (UPDRS) scores using remote telemonitoring metrics (LightGBM).
     """)
     
@@ -129,7 +129,7 @@ elif app_mode == "Parkinson's Detection (Classification)":
             st.write("### Target Distribution")
             fig, ax = plt.subplots(figsize=(6, 3.5))
             df['status'].value_counts().plot(kind='bar', color=['skyblue', 'salmon'], edgecolor='black', ax=ax)
-            ax.set_xticklabels(["Healthy (0)", "Parkinson's (1)"], rotation=0)
+            ax.set_xticklabels(["Parkinson's (1)", "Healthy (0)"], rotation=0)
             ax.set_ylabel("Frequency")
             st.pyplot(fig)
 
