@@ -3,13 +3,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from sklearn.model_selection import train_test_split, KFold, cross_val_score, StratifiedShuffleSplit
+from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    roc_curve, auc, ConfusionMatrixDisplay, RocCurveDisplay,
-    mean_absolute_error, mean_squared_error, r2_score
+    roc_curve, auc, ConfusionMatrixDisplay, mean_absolute_error, mean_squared_error, r2_score
 )
 from imblearn.over_sampling import SMOTE
 import lightgbm as lgbm
@@ -25,12 +24,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Define paths to your bundled data
+# Define paths to bundled data
 DATA_DIR = "data"
 CLASSIFICATION_DATA_PATH = os.path.join(DATA_DIR, "parkinsons.data")
 REGRESSION_DATA_PATH = os.path.join(DATA_DIR, "parkinsons_updrs.data")
 
-# Cache data loading to ensure high performance
+# Cache data loading
 @st.cache_data
 def load_classification_data(path):
     if os.path.exists(path):
@@ -50,14 +49,12 @@ st.markdown("This application analyzes vocal measurement datasets for clinical d
 if "app_mode" not in st.session_state:
     st.session_state.app_mode = "About the App"
 
-# Callback functions to update page state safely
 def go_to_classification():
     st.session_state.app_mode = "Parkinson's Detection (Classification)"
 
 def go_to_regression():
     st.session_state.app_mode = "Telemonitoring UPDRS (Regression)"
 
-# Sidebar Navigation using session state key
 app_mode = st.sidebar.radio(
     "Choose the dataset/task:",
     [
@@ -80,24 +77,15 @@ if app_mode == "About the App":
     st.markdown("---")
     
     col1, col2 = st.columns(2)
-    
     with col1:
         st.write("### 🎙️ Parkinson's Detection")
         st.write("Explore voice classification models, confusion matrices, and model auditing.")
-        st.button(
-            "Go to Classification Task ➡️", 
-            on_click=go_to_classification, 
-            use_container_width=True
-        )
+        st.button("Go to Classification Task ➡️", on_click=go_to_classification, use_container_width=True)
 
     with col2:
         st.write("### 📈 Telemonitoring UPDRS")
         st.write("Predict symptom progression and evaluate LightGBM regression performance.")
-        st.button(
-            "Go to Regression Task ➡️", 
-            on_click=go_to_regression, 
-            use_container_width=True
-        )
+        st.button("Go to Regression Task ➡️", on_click=go_to_regression, use_container_width=True)
 
 # --- PAGE 2: CLASSIFICATION & MODEL AUDITING ---
 elif app_mode == "Parkinson's Detection (Classification)":
@@ -113,7 +101,7 @@ elif app_mode == "Parkinson's Detection (Classification)":
         with col1:
             st.metric("Total Recordings", df.shape[0])
         with col2:
-            st.metric("Total Features", df.shape[1] - 2) # excluding name and status
+            st.metric("Total Features", df.shape[1] - 2)
         with col3:
             healthy_count = (df['status'] == 0).sum()
             pd_count = (df['status'] == 1).sum()
@@ -124,7 +112,6 @@ elif app_mode == "Parkinson's Detection (Classification)":
 
         # Visualizations
         col_vis1, col_vis2 = st.columns(2)
-        
         with col_vis1:
             st.write("### Target Distribution")
             fig, ax = plt.subplots(figsize=(6, 3.5))
@@ -156,7 +143,6 @@ elif app_mode == "Parkinson's Detection (Classification)":
             horizontal=True
         )
 
-        # Sanitize column names for XGBoost & LightGBM compatibility
         df_clean = df.copy()
         raw_feature_cols = [c for c in df_clean.columns if c not in ['name', 'status']]
         sanitized_cols = [
@@ -166,51 +152,82 @@ elif app_mode == "Parkinson's Detection (Classification)":
         col_rename_dict = dict(zip(raw_feature_cols, sanitized_cols))
         df_clean.rename(columns=col_rename_dict, inplace=True)
 
-        # Data Splitting
-        if "Patient-Level" in split_method:
-            unique_patients = df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).unique()
-            patient_train, patient_test = train_test_split(np.array(unique_patients), test_size=0.2, random_state=42)
+        # Training Execution & Session State Caching
+        should_train = (
+            "models_trained" not in st.session_state 
+            or st.session_state.get("last_split_method") != split_method
+        )
 
-            train_df = df_clean[df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).isin(patient_train)]
-            test_df = df_clean[df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).isin(patient_test)]
+        if should_train:
+            with st.spinner("Training models and computing metrics..."):
+                if "Patient-Level" in split_method:
+                    unique_patients = df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).unique()
+                    patient_train, patient_test = train_test_split(np.array(unique_patients), test_size=0.2, random_state=42)
 
-            X_train = train_df[sanitized_cols]
-            y_train = train_df['status']
-            X_test = test_df[sanitized_cols]
-            y_test = test_df['status']
-        else:
-            X = df_clean[sanitized_cols]
-            y = df_clean['status']
-            sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
-            train_idx, test_idx = next(sss.split(X, y))
-            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+                    train_df = df_clean[df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).isin(patient_train)]
+                    test_df = df_clean[df_clean['name'].apply(lambda x: '_'.join(x.split('_')[:3])).isin(patient_test)]
 
-        # Scaler
-        scaler = StandardScaler()
-        X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns)
-        X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns)
+                    X_train = train_df[sanitized_cols]
+                    y_train = train_df['status']
+                    X_test = test_df[sanitized_cols]
+                    y_test = test_df['status']
+                else:
+                    X = df_clean[sanitized_cols]
+                    y = df_clean['status']
+                    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+                    train_idx, test_idx = next(sss.split(X, y))
+                    X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+                    y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
 
-        # Fit all 3 models for side-by-side auditing
-        models = {
-            "XGBoost": xgb.XGBClassifier(
-                objective='binary:logistic', eval_metric='logloss', use_label_encoder=False,
-                n_estimators=100, learning_rate=0.1, max_depth=5, random_state=42
-            ),
-            "LightGBM": lgbm.LGBMClassifier(
-                objective='binary', metric='binary_logloss', n_estimators=100,
-                learning_rate=0.1, max_depth=5, random_state=42, n_jobs=-1, verbose=-1
-            ),
-            "Random Forest": RandomForestClassifier(
-                n_estimators=100, random_state=42 
-            )
-        }
+                scaler = StandardScaler()
+                X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns)
+                X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns)
 
-        preds, probas = {}, {}
-        for name, model in models.items():
-            model.fit(X_train_scaled, y_train)
-            preds[name] = model.predict(X_test_scaled)
-            probas[name] = model.predict_proba(X_test_scaled)[:, 1]
+                models = {
+                    "XGBoost": xgb.XGBClassifier(
+                        objective='binary:logistic', eval_metric='logloss', use_label_encoder=False,
+                        n_estimators=100, learning_rate=0.1, max_depth=5, random_state=42
+                    ),
+                    "LightGBM": lgbm.LGBMClassifier(
+                        objective='binary', metric='binary_logloss', n_estimators=100,
+                        learning_rate=0.1, max_depth=5, random_state=42, n_jobs=-1, verbose=-1
+                    ),
+                    "Random Forest": RandomForestClassifier(
+                        n_estimators=100, random_state=42 
+                    )
+                }
+
+                preds, probas, feature_importances = {}, {}, {}
+                for name, model in models.items():
+                    model.fit(X_train_scaled, y_train)
+                    preds[name] = model.predict(X_test_scaled)
+                    probas[name] = model.predict_proba(X_test_scaled)[:, 1]
+                    
+                    # Normalized feature importances (0 to 1 scale)
+                    imp = model.feature_importances_
+                    feature_importances[name] = imp / imp.sum()
+
+                # Store into Session State
+                st.session_state.models = models
+                st.session_state.preds = preds
+                st.session_state.probas = probas
+                st.session_state.feature_importances = feature_importances
+                st.session_state.X_train = X_train
+                st.session_state.X_test = X_test
+                st.session_state.X_test_scaled = X_test_scaled
+                st.session_state.y_train = y_train
+                st.session_state.y_test = y_test
+                st.session_state.last_split_method = split_method
+                st.session_state.models_trained = True
+
+        # Extract variables from state
+        models = st.session_state.models
+        preds = st.session_state.preds
+        probas = st.session_state.probas
+        X_train = st.session_state.X_train
+        X_test = st.session_state.X_test
+        X_test_scaled = st.session_state.X_test_scaled
+        y_test = st.session_state.y_test
 
         # Model Selector for Single-Model Inspection
         selected_model_name = st.selectbox("Select Model for Single Focus", list(models.keys()))
@@ -218,7 +235,7 @@ elif app_mode == "Parkinson's Detection (Classification)":
         y_pred = preds[selected_model_name]
         y_prob = probas[selected_model_name]
 
-        # Single Model Display Metrics
+        # Single Model Metrics
         st.markdown(f"#### Performance: **{selected_model_name}**")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
@@ -254,11 +271,12 @@ elif app_mode == "Parkinson's Detection (Classification)":
             "⚠️ Misclassification Analysis"
         ])
 
+        colors = {'XGBoost': '#1f77b4', 'LightGBM': '#2ca02c', 'Random Forest': '#d62728'}
+
         # TAB 1: ROC Curves
         with audit_tab1:
             st.write("### Multi-Model ROC Curve Comparison")
             fig, ax = plt.subplots(figsize=(8, 5))
-            colors = {'XGBoost': 'blue', 'LightGBM': 'green', 'Random Forest': 'red'}
             
             for name in models.keys():
                 fpr, tpr, _ = roc_curve(y_test, probas[name])
@@ -273,25 +291,64 @@ elif app_mode == "Parkinson's Detection (Classification)":
             ax.grid(True, alpha=0.3)
             st.pyplot(fig)
 
-        # TAB 2: Consolidated Feature Importance
+        # TAB 2: Consolidated Feature Importance Summary
         with audit_tab2:
-            st.write("### Consolidated Top 15 Feature Importances Across Models")
-            importance_df = pd.DataFrame({
-                name: model.feature_importances_ for name, model in models.items()
-            }, index=X_train.columns).fillna(0)
+            st.write("### 📊 Feature Importance Summary Across Models")
+            st.markdown(
+                "Because different algorithms calculate feature importance differently (e.g., split counts vs. Gini gain), "
+                "scores are normalized to a **0–1 scale** for each model. Below is the consensus ranking across all three classifiers."
+            )
             
-            importance_df['Mean_Importance'] = importance_df.mean(axis=1)
-            importance_df = importance_df.sort_values(by='Mean_Importance', ascending=False)
+            # Construct feature importance DataFrame
+            importance_df = pd.DataFrame(
+                st.session_state.feature_importances, 
+                index=X_train.columns
+            ).fillna(0)
+            
+            # Calculate mean importance across models
+            importance_df['Average Importance'] = importance_df[['XGBoost', 'LightGBM', 'Random Forest']].mean(axis=1)
+            importance_df = importance_df.sort_values(by='Average Importance', ascending=False)
+            
+            # Add Rank column
+            importance_df['Rank'] = range(1, len(importance_df) + 1)
+            
+            # Side-by-Side: Consensus Chart & Summary Table
+            col_chart, col_table = st.columns([1.1, 1])
+            
+            with col_chart:
+                st.write("#### 🎯 Top 15 Consensus Features")
+                fig, ax = plt.subplots(figsize=(6, 5.5))
+                
+                # Plot top 15 in ascending order for bottom-to-top visual ranking
+                top_15_avg = importance_df['Average Importance'].head(15)[::-1]
+                top_15_avg.plot(kind='barh', color='#2b5c8f', edgecolor='black', ax=ax)
+                
+                ax.set_xlabel('Mean Normalized Importance Score')
+                ax.set_ylabel('Feature')
+                ax.set_title('Consensus Feature Impact (All Models)')
+                ax.grid(True, linestyle='--', alpha=0.4)
+                st.pyplot(fig)
+                
+            with col_table:
+                st.write("#### 📋 Score Breakdown Table")
+                
+                # Select key columns for display
+                display_cols = ['Rank', 'Average Importance', 'XGBoost', 'LightGBM', 'Random Forest']
+                summary_table = importance_df[display_cols].head(15)
+                
+                # Format dataframe with gradient highlighting
+                st.dataframe(
+                    summary_table.style.format({
+                        'Average Importance': '{:.4f}',
+                        'XGBoost': '{:.4f}',
+                        'LightGBM': '{:.4f}',
+                        'Random Forest': '{:.4f}'
+                    }).background_gradient(cmap='YlGnBu', subset=['Average Importance']),
+                    use_container_width=True,
+                    height=420
+                )
 
-            fig, ax = plt.subplots(figsize=(10, 6))
-            importance_df.drop('Mean_Importance', axis=1).head(15).plot(kind='barh', ax=ax, colormap='viridis')
-            ax.invert_yaxis()
-            ax.set_xlabel('Feature Importance Score')
-            ax.set_ylabel('Feature Name')
-            ax.set_title('Top 15 Features Comparison')
-            st.pyplot(fig)
-
-        # TAB 3: Model Calibration (Reliability Diagram)
+        # TAB 3: Model Calibration
         with audit_tab3:
             st.write("### Calibration Curves (Reliability Diagram)")
             st.markdown(
@@ -315,13 +372,11 @@ elif app_mode == "Parkinson's Detection (Classification)":
         with audit_tab4:
             st.write("### Identifying Challenging Edge Cases")
             
-            # Extract errors for each model
             misclass_dict = {}
             for name in models.keys():
                 err_mask = (y_test != preds[name])
                 misclass_dict[name] = set(X_test[err_mask].index)
 
-            # Common errors across all 3 models
             common_err_idx = list(set.intersection(*misclass_dict.values()))
             
             st.warning(f"**{len(common_err_idx)} instances** were consistently misclassified by ALL three models.")
@@ -330,19 +385,19 @@ elif app_mode == "Parkinson's Detection (Classification)":
                 err_df = X_test.loc[common_err_idx].copy()
                 err_df['True Label'] = y_test.loc[common_err_idx]
                 
-                # Show reference medians vs misclassifications
                 st.write("#### Detailed Feature View of Common Edge Cases")
                 st.dataframe(err_df)
 
                 st.markdown("""
                 #### 📌 Insights on Edge Cases
-                * **Instance Index 185 (False Positive):** Healthy individual exhibiting a high `PPE` (0.214) and `spread1` (-5.593) which strongly mimics Parkinson's voice profiles.
-                * **Instance Index 194 (False Positive):** Healthy individual with low `HNR` (21.209) and high `MDVP:Jitter(%)` (0.00567), leading models to predict PD.
-                * **Instance Index 7 (False Negative):** Parkinson's patient with atypically stable vocal metrics (high `HNR` of 26.892, low `Jitter` and `Shimmer`), causing models to miss the diagnosis.
+                * **Instance Index 185 (False Positive):** Healthy individual exhibiting high `PPE` (0.214) and `spread1` (-5.593) mimicking Parkinson's voice profiles.
+                * **Instance Index 194 (False Positive):** Healthy individual with low `HNR` (21.209) and high `MDVP:Jitter(%)` (0.00567).
+                * **Instance Index 7 (False Negative):** Parkinson's patient with atypically stable vocal metrics (high `HNR` of 26.892, low `Jitter` and `Shimmer`).
                 """)
 
     else:
         st.error(f"Data file not found at `{CLASSIFICATION_DATA_PATH}`. Please check the file path.")
+
 # --- PAGE 3: REGRESSION ---
 elif app_mode == "Telemonitoring UPDRS (Regression)":
     st.header("📈 Parkinson's Telemonitoring UPDRS Prediction")
@@ -363,7 +418,6 @@ elif app_mode == "Telemonitoring UPDRS (Regression)":
         if st.checkbox("Show raw data sample"):
             st.dataframe(df.head(10))
 
-        # Visualizing UPDRS Target Distribution
         st.write("### Distribution of Total UPDRS Scores")
         fig, ax = plt.subplots(figsize=(8, 3.5))
         ax.hist(df['total_UPDRS'], bins=30, color='skyblue', edgecolor='black')
@@ -371,12 +425,10 @@ elif app_mode == "Telemonitoring UPDRS (Regression)":
         ax.set_ylabel("Frequency")
         st.pyplot(fig)
 
-        # ML Pipeline: Subject-wise Split & LightGBM Regressor
         st.markdown("---")
         st.subheader("🤖 LightGBM Regression Engine")
 
         unique_subjects = df['subject#'].unique()
-        # Convert to a standard NumPy array to avoid PyArrow index issues
         subject_train, subject_test = train_test_split(np.array(unique_subjects), test_size=0.2, random_state=42)
 
         train_df = df[df['subject#'].isin(subject_train)]
@@ -388,20 +440,18 @@ elif app_mode == "Telemonitoring UPDRS (Regression)":
         X_test = test_df.drop(features_to_drop, axis=1)
         y_test = test_df['total_UPDRS']
 
-        # Scale features
         scaler = StandardScaler()
         X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns)
         X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns)
 
-        # Clean Column names for LightGBM
         X_train_scaled.columns = [''.join(c if c.isalnum() else '_' for c in str(x)) for x in X_train_scaled.columns]
         X_test_scaled.columns = [''.join(c if c.isalnum() else '_' for c in str(x)) for x in X_test_scaled.columns]
 
         # Model Execution
         with st.spinner("Training LightGBM Regressor..."):
-            lgbm = LGBMRegressor(random_state=42)
-            lgbm.fit(X_train_scaled, y_train)
-            y_pred = lgbm.predict(X_test_scaled)
+            lgbm_reg = LGBMRegressor(random_state=42)
+            lgbm_reg.fit(X_train_scaled, y_train)
+            y_pred = lgbm_reg.predict(X_test_scaled)
 
         # Show Performance Metrics
         m1, m2, m3, m4 = st.columns(4)
